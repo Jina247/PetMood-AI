@@ -33,7 +33,7 @@ def create_pet(body: PetCreate, db: Session = Depends(get_db), current_user: Use
     db.refresh(new_pet)
     return new_pet
 
-@router.put("/{pet_id}", response_model=PetResponse)
+@router.patch("/{pet_id}", response_model=PetResponse)
 def update_pet(pet_id: str, body: PetUpdate,  db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     pet = db.query(Pet).filter(Pet.id == pet_id, Pet.owner_id == current_user.id).first()
     if not pet:
