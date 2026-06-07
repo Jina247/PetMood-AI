@@ -5,14 +5,12 @@ from pwdlib import PasswordHash
 from jose import jwt
 from datetime import datetime, timedelta
 
-from database import get_db
-from models import User
-from schemas.auth import LoginResponse, LoginRequest
-from schemas.login import RegisterRequest, RegisterResponse
+from database.database import get_db
+from database.models import User
+from schemas.login import LoginResponse, LoginRequest
+from schemas.register import RegisterRequest, RegisterResponse
+from config import SECRET_KEY, ALGORITHM, TOKEN_EXPIRE_MINUTES
 
-SECRET_KEY = ""
-ALGORITHM = "HS256"
-TOKEN_EXPIRATION = 60 * 24
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 password_hash = PasswordHash.recommended()
@@ -54,7 +52,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 def create_token(user_id: str) -> str:
     payload = {
         "sub": user_id,
-        "exp": datetime.utcnow() + timedelta(minutes=TOKEN_EXPIRATION)
+        "exp": datetime.utcnow() + timedelta(minutes=TOKEN_EXPIRE_MINUTES)
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -62,6 +60,7 @@ def create_token(user_id: str) -> str:
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     statement = select(User).where(User.email == body.email)
     user = db.execute(statement).scalar_one_or_none()
+
     if not user:
         raise HTTPException(status_code=401, detail="Incorrect email or password")
     if not password_hash.verify(body.password, user.hashed_password):
