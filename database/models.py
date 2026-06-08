@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import List
-from sqlalchemy import String, Integer, DateTime, ForeignKey, Enum as SAEnum, func
+from sqlalchemy import String, Integer, DateTime, ForeignKey, Enum as SAEnum, func, Float
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 import uuid
@@ -34,3 +34,20 @@ class Pet(Base):
 
     owner_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     owner: Mapped["User"] = relationship("User", back_populates="pets")
+    scans: Mapped[List["Scan"]] = relationship("Scan", back_populates="pet", cascade="all, delete-orphan")
+
+class Scan(Base):
+    __tablename__ = "scans"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_uuid)
+    status: Mapped[str] = mapped_column(
+        SAEnum("processing", "complete", "failed", name="scan_status"),
+        default="processing"
+    )
+    mood_result: Mapped[str] = mapped_column(String, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=True)
+    video_path: Mapped[str] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    pet_id: Mapped[str] = mapped_column(String, ForeignKey("pets.id"), nullable=False)
+    pet: Mapped["Pet"] = relationship("Pet", back_populates="scans")
