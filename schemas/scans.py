@@ -9,6 +9,7 @@ class ScanResponse(BaseModel):
     confidence: Optional[float] = None
     created_at: datetime
     pet_id: str
+    summary: Optional[str] = None
 
     class Config:
         from_attributes = True
