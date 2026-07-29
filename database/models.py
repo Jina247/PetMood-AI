@@ -31,7 +31,7 @@ class Pet(Base):
     pet_type: Mapped[str] = mapped_column(String(50), nullable=False)
     gender: Mapped[str] = mapped_column(SAEnum("male", "female", "unknown", name="gender_enum"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
+    
     owner_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     owner: Mapped["User"] = relationship("User", back_populates="pets")
     scans: Mapped[List["Scan"]] = relationship("Scan", back_populates="pet", cascade="all, delete-orphan")
