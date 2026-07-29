@@ -9,6 +9,7 @@ from database.database import get_db
 from database.models import User
 from schemas.login import LoginResponse, LoginRequest
 from schemas.register import RegisterRequest, RegisterResponse
+from dependencies import get_current_user
 from config import SECRET_KEY, ALGORITHM, TOKEN_EXPIRE_MINUTES
 
 
@@ -69,3 +70,11 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     token = create_token(user.id)
     name = user.name
     return LoginResponse(name=name, email=body.email, access_token=token)
+
+@router.get("/users/me", response_model=RegisterResponse)
+def get_current_user_info(current_user: User = Depends(get_current_user)):
+    return RegisterResponse(
+        user_id=current_user.id,
+        name=current_user.name,
+        email=current_user.email
+    )
