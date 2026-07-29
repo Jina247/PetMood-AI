@@ -26,6 +26,7 @@ def create_pet(body: PetCreate, db: Session = Depends(get_db), current_user: Use
         age=body.age,
         pet_type=body.pet_type,
         gender=body.gender,
+        photoUri = body.photoUri,
         owner_id=current_user.id
     )
     db.add(new_pet)

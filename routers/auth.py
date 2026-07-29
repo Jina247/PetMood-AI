@@ -67,4 +67,5 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
 
     token = create_token(user.id)
-    return LoginResponse(access_token=token)
+    name = user.name
+    return LoginResponse(name=name, email=body.email, access_token=token)

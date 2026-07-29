@@ -31,6 +31,7 @@ def analyze_video(scan_id: str, video_path: str, db: Session):
             scan.status = "complete"
             scan.mood_result = mood
             scan.confidence = confidence
+            scan.summary = "Mochi seems happy and relaxed. No signs of stress detected."  
             db.commit()
 
     except Exception:
@@ -117,3 +118,27 @@ def get_scans(
     ).scalars().all()
 
     return scans
+
+@router.get("/{pet_id}/latest-scan", response_model=ScanResponse)
+def get_latest_scan(
+    pet_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    pet = db.execute(
+        select(Pet).where(Pet.id == pet_id, Pet.owner_id == current_user.id)
+    ).scalar_one_or_none()
+    if not pet:
+        raise HTTPException(status_code=404, detail="Pet not found")
+
+    scan = db.execute(
+        select(Scan)
+        .where(Scan.pet_id == pet_id)
+        .order_by(Scan.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    if not scan:
+        raise HTTPException(status_code=404, detail="No scans found")
+
+    return scan
