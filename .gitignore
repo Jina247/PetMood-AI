@@ -1,0 +1,23 @@
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Database
+*.db
+*.sqlite3
+
+# User-uploaded content
+uploads/
+
+# IDE
+.idea/
+
+# OS
+.DS_Store
