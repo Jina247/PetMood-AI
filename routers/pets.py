@@ -26,7 +26,7 @@ def create_pet(body: PetCreate, db: Session = Depends(get_db), current_user: Use
         age=body.age,
         pet_type=body.pet_type,
         gender=body.gender,
-        photoUri = body.photoUri,
+        photo_uri=body.photoUri,
         owner_id=current_user.id
     )
     db.add(new_pet)
@@ -52,7 +52,7 @@ def update_pet(pet_id: str, body: PetUpdate,  db: Session = Depends(get_db), cur
 def delete_pet(pet_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     pet = db.query(Pet).filter(Pet.id == pet_id, Pet.owner_id == current_user.id).first()
     if not pet:
-        return HTTPException(status_code=404, detail="Pet not found")
+        raise HTTPException(status_code=404, detail="Pet not found")
 
     db.delete(pet)
     db.commit()
