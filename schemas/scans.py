@@ -10,6 +10,7 @@ class ScanResponse(BaseModel):
     created_at: datetime
     pet_id: str
     summary: Optional[str] = None
+    error_message: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -1,44 +1,65 @@
+import os
+import re
+import uuid
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from sqlalchemy.orm import Session
-from sqlalchemy import select
-import shutil
-import os
+from sqlalchemy import select, func
 
-from database.database import get_db
+from database.database import get_db, SessionLocal
 from database.models import Pet, Scan, User
 from dependencies import get_current_user
 from schemas.scans import ScanResponse
+from gemini_client import analyze_pet_video, GeminiAnalysisError
 
 router = APIRouter(prefix="/pets", tags=["scans"])
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+MAX_VIDEO_SIZE_BYTES = 50 * 1024 * 1024  # 50MB
+ALLOWED_VIDEO_CONTENT_TYPES = {
+    "video/mp4",
+    "video/mpeg",
+    "video/quicktime",
+    "video/webm",
+    "video/3gpp",
+}
+SAFE_EXTENSION_RE = re.compile(r"\.[a-zA-Z0-9]{1,5}$")
 
-def analyze_video(scan_id: str, video_path: str, db: Session):
-    """This runs in the background after upload."""
+SCAN_RATE_LIMIT_COUNT = 5
+SCAN_RATE_LIMIT_WINDOW = timedelta(hours=1)
+
+
+def analyze_video(scan_id: str, video_path: str):
+    """Runs in the background after upload. Opens its own DB session rather
+    than reusing the request-scoped one, since get_db() closes that session
+    once the response is sent, which can race with this task."""
+    db = SessionLocal()
     try:
-        # TODO: replace this with real Gemini API call later
-        import time
-        time.sleep(3)  # simulates AI processing time
-
-        # fake result for now
-        mood = "happy"
-        confidence = 0.92
-
         scan = db.execute(select(Scan).where(Scan.id == scan_id)).scalar_one_or_none()
-        if scan:
+        if not scan:
+            return
+
+        try:
+            result = analyze_pet_video(video_path)
             scan.status = "complete"
-            scan.mood_result = mood
-            scan.confidence = confidence
-            scan.summary = "Mochi seems happy and relaxed. No signs of stress detected."  
-            db.commit()
-
-    except Exception:
-        scan = db.execute(select(Scan).where(Scan.id == scan_id)).scalar_one_or_none()
-        if scan:
+            scan.mood_result = result.mood
+            scan.confidence = result.confidence
+            scan.summary = result.summary
+        except GeminiAnalysisError as e:
             scan.status = "failed"
-            db.commit()
+            scan.error_message = str(e)
+        except Exception:
+            scan.status = "failed"
+            scan.error_message = "Unexpected error during analysis"
+
+        db.commit()
+    finally:
+        db.close()
+        if os.path.exists(video_path):
+            os.remove(video_path)
 
 
 @router.post("/{pet_id}/scans", response_model=ScanResponse, status_code=201)
@@ -56,13 +77,39 @@ def create_scan(
     if not pet:
         raise HTTPException(status_code=404, detail="Pet not found")
 
-    # 2. save video file
-    video_path = f"{UPLOAD_DIR}/{pet_id}_{file.filename}"
-    with open(video_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    # 2. validate content type
+    if file.content_type not in ALLOWED_VIDEO_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported video format: {file.content_type}")
 
-    # 3. create scan record with status "processing"
+    # 3. per-user rate limit, since each scan costs a Gemini API call
+    window_start = datetime.utcnow() - SCAN_RATE_LIMIT_WINDOW
+    recent_scan_count = db.execute(
+        select(func.count(Scan.id))
+        .join(Pet, Scan.pet_id == Pet.id)
+        .where(Pet.owner_id == current_user.id, Scan.created_at >= window_start)
+    ).scalar_one()
+    if recent_scan_count >= SCAN_RATE_LIMIT_COUNT:
+        raise HTTPException(status_code=429, detail="Scan limit reached, please try again later")
+
+    # 4. save video under a server-generated filename (never trust the client's filename for a path)
+    scan_id = str(uuid.uuid4())
+    raw_ext = os.path.splitext(file.filename or "")[1]
+    extension = raw_ext if SAFE_EXTENSION_RE.fullmatch(raw_ext) else ".mp4"
+    video_path = f"{UPLOAD_DIR}/{scan_id}{extension}"
+
+    size = 0
+    with open(video_path, "wb") as buffer:
+        while chunk := file.file.read(1024 * 1024):
+            size += len(chunk)
+            if size > MAX_VIDEO_SIZE_BYTES:
+                buffer.close()
+                os.remove(video_path)
+                raise HTTPException(status_code=400, detail="Video exceeds maximum size of 50MB")
+            buffer.write(chunk)
+
+    # 5. create scan record with status "processing"
     new_scan = Scan(
+        id=scan_id,
         pet_id=pet_id,
         status="processing",
         video_path=video_path
@@ -71,10 +118,10 @@ def create_scan(
     db.commit()
     db.refresh(new_scan)
 
-    # 4. run AI analysis in background
-    background_tasks.add_task(analyze_video, new_scan.id, video_path, db)
+    # 6. run AI analysis in background
+    background_tasks.add_task(analyze_video, new_scan.id, video_path)
 
-    # 5. return immediately with status "processing"
+    # 7. return immediately with status "processing"
     return new_scan
 
 

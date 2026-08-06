@@ -18,8 +18,12 @@ config.set_main_option("sqlalchemy.url", DATABASE_URL)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
+# disable_existing_loggers=False since this runs from main.py's lifespan
+# on every app startup, not just standalone `alembic` CLI invocations —
+# the default would otherwise silently disable every logger the app had
+# already created (e.g. main.py's) the moment migrations run.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # add your model's MetaData object here
 # for 'autogenerate' support

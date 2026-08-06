@@ -48,7 +48,9 @@ class Scan(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=True)
     video_path: Mapped[str] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
     summary: Mapped[str] = mapped_column(String, nullable=True)
+    error_message: Mapped[str] = mapped_column(String, nullable=True)
 
     pet_id: Mapped[str] = mapped_column(String, ForeignKey("pets.id"), nullable=False)
     pet: Mapped["Pet"] = relationship("Pet", back_populates="scans")
