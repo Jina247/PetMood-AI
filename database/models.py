@@ -1,6 +1,6 @@
 from datetime import datetime
-from typing import List
-from sqlalchemy import String, Integer, DateTime, ForeignKey, Enum as SAEnum, func, Float
+from typing import List, Optional
+from sqlalchemy import String, Integer, DateTime, ForeignKey, Enum as SAEnum, func, Float, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 import uuid
@@ -51,6 +51,12 @@ class Scan(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
     summary: Mapped[str] = mapped_column(String, nullable=True)
     error_message: Mapped[str] = mapped_column(String, nullable=True)
+
+    # Optional extras a scan can carry alongside its (always-required) video: up to
+    # MAX_PHOTOS supporting photos and a free-text description of the pet's behavior.
+    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    photo_paths: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    suggestions: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
     pet_id: Mapped[str] = mapped_column(String, ForeignKey("pets.id"), nullable=False)
     pet: Mapped["Pet"] = relationship("Pet", back_populates="scans")

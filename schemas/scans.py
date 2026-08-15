@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime
 
 class ScanResponse(BaseModel):
@@ -11,6 +11,8 @@ class ScanResponse(BaseModel):
     pet_id: str
     summary: Optional[str] = None
     error_message: Optional[str] = None
+    description: Optional[str] = None
+    suggestions: Optional[List[str]] = None
 
     class Config:
         from_attributes = True
