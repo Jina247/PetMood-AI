@@ -9,6 +9,7 @@ from database.database import get_db
 from database.models import User
 from schemas.login import LoginResponse, LoginRequest
 from schemas.register import RegisterRequest, RegisterResponse
+from schemas.fcm import FcmTokenUpdate
 from dependencies import get_current_user
 from config import SECRET_KEY, ALGORITHM, TOKEN_EXPIRE_MINUTES
 
@@ -78,3 +79,15 @@ def get_current_user_info(current_user: User = Depends(get_current_user)):
         name=current_user.name,
         email=current_user.email
     )
+
+@router.patch("/fcm-token", status_code=204)
+def update_fcm_token(
+    body: FcmTokenUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Registers or clears (fcm_token: null) the current device's FCM token.
+    One endpoint handles both cases — the JWT's sub is the identity, so there's
+    no path param, same shape as GET /users/me above."""
+    current_user.fcm_token = body.fcm_token
+    db.commit()
