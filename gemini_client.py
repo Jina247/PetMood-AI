@@ -1,14 +1,28 @@
+import logging
 import mimetypes
 import time
 from typing import List, Optional
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 from pydantic import BaseModel, Field
 
 from config import GEMINI_API_KEY
 
-GEMINI_MODEL = "gemini-flash-latest"
+logger = logging.getLogger(__name__)
+
+# Tried in order for each analysis request. Google buckets free-tier rate limits
+# per model, not per account/key — so a 429 on one model doesn't mean the others
+# are also exhausted. Ordered by capability first (flash-lite last: still usable,
+# but a lower-capability fallback).
+#
+# Verified live against this project's key (see chat history) rather than
+# assumed: gemini-flash-latest currently resolves to gemini-3.7-flash, so
+# listing that explicitly too would just hit the same quota bucket twice.
+# gemini-2.5-flash and gemini-2.5-flash-lite are both dead 404s here —
+# "no longer available to new users" — despite still showing up in
+# client.models.list(); don't re-add them without re-checking.
+GEMINI_MODELS = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.1-flash-lite"]
 FILE_PROCESSING_POLL_INTERVAL_SECONDS = 2
 FILE_PROCESSING_TIMEOUT_SECONDS = 60
 
@@ -116,17 +130,32 @@ def analyze_pet_scan(video_path: str, photo_paths: List[str], description: Optio
         prompt = _build_prompt(len(photo_paths), description)
         contents = [uploaded_file] + photo_parts + [prompt]
 
-        try:
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=ScanAnalysis,
-                ),
-            )
-        except Exception as e:
-            raise GeminiAnalysisError(f"Gemini analysis request failed: {e}") from e
+        response = None
+        rate_limit_error: Optional[Exception] = None
+        for model in GEMINI_MODELS:
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=ScanAnalysis,
+                    ),
+                )
+                break
+            except errors.ClientError as e:
+                if e.code == 429:
+                    logger.warning(f"{model} is rate-limited, falling back to next model")
+                    rate_limit_error = e
+                    continue
+                raise GeminiAnalysisError(f"Gemini analysis request failed: {e}") from e
+            except Exception as e:
+                raise GeminiAnalysisError(f"Gemini analysis request failed: {e}") from e
+
+        if response is None:
+            raise GeminiAnalysisError(
+                f"All Gemini models are rate-limited: {rate_limit_error}"
+            ) from rate_limit_error
 
         if not isinstance(response.parsed, ScanAnalysis):
             raise GeminiAnalysisError("Gemini returned an unparseable response")
