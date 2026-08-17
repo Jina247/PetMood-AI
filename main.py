@@ -7,6 +7,7 @@ from alembic.config import Config
 from fastapi import FastAPI
 
 from config import GEMINI_API_KEY
+from firebase_client import init_firebase
 from routers import auth, pets, scans
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI):
     run_migrations()
     if not GEMINI_API_KEY:
         logger.warning("GEMINI_API_KEY is not set — scan analysis will fail until it's configured.")
+    init_firebase()
     yield
 
 

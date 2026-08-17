@@ -13,6 +13,7 @@ from database.models import Pet, Scan, User
 from dependencies import get_current_user
 from schemas.scans import ScanResponse
 from gemini_client import analyze_pet_scan, GeminiAnalysisError
+from firebase_client import send_scan_notification
 
 router = APIRouter(prefix="/pets", tags=["scans"])
 
@@ -78,6 +79,16 @@ def analyze_scan(scan_id: str, video_path: str, photo_paths: List[str], descript
             scan.error_message = "Unexpected error during analysis"
 
         db.commit()
+
+        # scan.pet / Pet.owner are existing relationships, lazy-loaded in this
+        # same session — never let a notification failure affect the result
+        # already committed above (send_scan_notification swallows internally).
+        owner_token = scan.pet.owner.fcm_token
+        if owner_token:
+            if scan.status == "complete":
+                send_scan_notification(owner_token, "Analysis complete", "Your pet's mood analysis is ready.")
+            else:
+                send_scan_notification(owner_token, "Analysis failed", scan.error_message or "Something went wrong.")
     finally:
         db.close()
         if os.path.exists(video_path):
