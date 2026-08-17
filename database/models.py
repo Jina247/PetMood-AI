@@ -20,6 +20,7 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    fcm_token: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     pets: Mapped[List["Pet"]] = relationship("Pet", back_populates="owner", cascade="all, delete-orphan")
 
 class Pet(Base):
