@@ -89,8 +89,9 @@ def _friendly_gemini_error(e: Optional[Exception]) -> str:
     str(e) on the SDK's own errors dumps the full raw response body (confirmed live:
     a 503 surfaced as "Gemini analysis request failed: 503 UNAVAILABLE. {'error':
     {'code': 503, 'me...'" verbatim in the app's toast, via GeminiAnalysisError's
-    message -> scan.error_message -> Android's onAnalysisFailed Toast) — callers should
-    always log the raw exception themselves before raising with this instead.
+    message -> scan.error_message -> the app's error message and push notification) — every
+    GeminiAnalysisError message is shown to the owner, so callers log the raw exception
+    themselves and raise with this (or another plain message) instead.
     """
     if isinstance(e, errors.ServerError):
         return ("The mood analysis service is temporarily overloaded. "
@@ -152,23 +153,31 @@ def analyze_pet_scan(video_path: str, photo_paths: List[str], description: Optio
     try:
         client = _get_client()
     except RuntimeError as e:
-        raise GeminiAnalysisError(str(e)) from e
+        logger.error(f"Gemini client unavailable: {e}")
+        raise GeminiAnalysisError(_friendly_gemini_error(e)) from e
 
     try:
         uploaded_file = client.files.upload(file=video_path)
     except Exception as e:
-        raise GeminiAnalysisError(f"Failed to upload video to Gemini: {e}") from e
+        logger.error(f"Failed to upload video to Gemini: {e}")
+        raise GeminiAnalysisError(_friendly_gemini_error(e)) from e
 
     try:
         deadline = time.monotonic() + FILE_PROCESSING_TIMEOUT_SECONDS
         while uploaded_file.state == types.FileState.PROCESSING:
             if time.monotonic() > deadline:
-                raise GeminiAnalysisError("Timed out waiting for Gemini to process the video")
+                logger.error(f"Timed out waiting for Gemini to process {uploaded_file.name}")
+                raise GeminiAnalysisError(
+                    "Processing your video took too long. Please try again with a shorter clip."
+                )
             time.sleep(FILE_PROCESSING_POLL_INTERVAL_SECONDS)
             uploaded_file = client.files.get(name=uploaded_file.name)
 
         if uploaded_file.state != types.FileState.ACTIVE:
-            raise GeminiAnalysisError(f"Gemini rejected the video (state: {uploaded_file.state})")
+            logger.error(f"Gemini rejected the video (state: {uploaded_file.state})")
+            raise GeminiAnalysisError(
+                "We couldn't process this video. Please try a different clip."
+            )
 
         photo_parts = []
         for path in photo_paths:
@@ -176,7 +185,10 @@ def analyze_pet_scan(video_path: str, photo_paths: List[str], description: Optio
                 with open(path, "rb") as f:
                     data = f.read()
             except OSError as e:
-                raise GeminiAnalysisError(f"Failed to read photo {path}: {e}") from e
+                logger.error(f"Failed to read photo {path}: {e}")
+                raise GeminiAnalysisError(
+                    "We couldn't read one of your photos. Please try again."
+                ) from e
             mime_type = mimetypes.guess_type(path)[0] or "image/jpeg"
             photo_parts.append(types.Part.from_bytes(data=data, mime_type=mime_type))
 
@@ -205,14 +217,15 @@ def analyze_pet_scan(video_path: str, photo_paths: List[str], description: Optio
                 continue
             except Exception as e:
                 logger.error(f"Gemini analysis request failed ({model}): {e}")
-                raise GeminiAnalysisError(f"Gemini analysis request failed: {e}") from e
+                raise GeminiAnalysisError(_friendly_gemini_error(e)) from e
 
         if response is None:
             logger.error(f"All Gemini models exhausted: {last_error}")
             raise GeminiAnalysisError(_friendly_gemini_error(last_error)) from last_error
 
         if not isinstance(response.parsed, ScanAnalysis):
-            raise GeminiAnalysisError("Gemini returned an unparseable response")
+            logger.error(f"Gemini returned an unparseable response: {response.text!r}")
+            raise GeminiAnalysisError(_friendly_gemini_error(None))
 
         return response.parsed
     finally:
