@@ -1,10 +1,11 @@
+import json
 import logging
 from typing import Optional
 
 import firebase_admin
 from firebase_admin import credentials, messaging
 
-from config import FIREBASE_KEY
+from config import FIREBASE_KEY, FIREBASE_KEY_JSON
 
 logger = logging.getLogger(__name__)
 
@@ -12,21 +13,27 @@ _initialized = False
 
 
 def init_firebase() -> None:
-    """Initializes the Firebase Admin SDK from a local service-account key file
-    path (FIREBASE_CRED). Soft-fails — logs a warning and returns rather than
+    """Initializes the Firebase Admin SDK from the service-account key, given either
+    as JSON content (FIREBASE_CRED_JSON) or a file path (FIREBASE_CRED). Soft-fails — logs a warning and returns rather than
     raising — if the credential is unset or invalid, so scan analysis keeps
     working even without push notifications configured. Mirrors how
     GEMINI_API_KEY is treated in main.py's lifespan."""
     global _initialized
-    if not FIREBASE_KEY:
-        logger.warning("FIREBASE_CRED is not set — push notifications will be skipped.")
+    if not FIREBASE_KEY_JSON and not FIREBASE_KEY:
+        logger.warning(
+            "Neither FIREBASE_CRED_JSON nor FIREBASE_CRED is set — push notifications will be skipped."
+        )
         return
     try:
-        cred = credentials.Certificate(FIREBASE_KEY)
+        source = json.loads(FIREBASE_KEY_JSON) if FIREBASE_KEY_JSON else FIREBASE_KEY
+        cred = credentials.Certificate(source)
         firebase_admin.initialize_app(cred)
         _initialized = True
+        logger.info("Firebase Admin SDK initialized — push notifications enabled.")
     except Exception as e:
-        logger.warning(f"Failed to initialize Firebase Admin SDK: {e}")
+        # Don't log e for JSON input: a parse error message can echo part of the key.
+        detail = "invalid FIREBASE_CRED_JSON" if FIREBASE_KEY_JSON else str(e)
+        logger.warning(f"Failed to initialize Firebase Admin SDK: {detail}")
 
 
 def send_scan_notification(
