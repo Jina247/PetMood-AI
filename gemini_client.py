@@ -26,6 +26,12 @@ GEMINI_MODELS = ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.1-flash-li
 FILE_PROCESSING_POLL_INTERVAL_SECONDS = 2
 FILE_PROCESSING_TIMEOUT_SECONDS = 60
 
+# A 503 UNAVAILABLE ("model overloaded, high demand") is transient — worth a couple of
+# retries with backoff before giving up on a model, unlike a 429 (quota) which won't
+# resolve itself within this request's lifetime. Backoff: 3s, then 6s.
+GEMINI_MAX_RETRIES_PER_MODEL = 2
+GEMINI_RETRY_BACKOFF_SECONDS = 3
+
 BASE_ANALYSIS_INSTRUCTIONS = (
     "You are a veterinary behaviorist analyzing a short video of a pet. "
     "Watch the video and assess the pet's mood based on its body language, "
@@ -75,6 +81,53 @@ def _build_prompt(num_photos: int, description: Optional[str]) -> str:
         prompt += DESCRIPTION_CLAUSE_TEMPLATE.format(description=description)
     prompt += RESPONSE_INSTRUCTIONS
     return prompt
+
+
+def _friendly_gemini_error(e: Optional[Exception]) -> str:
+    """Maps a raw Gemini SDK exception to a message safe to show a pet owner.
+
+    str(e) on the SDK's own errors dumps the full raw response body (confirmed live:
+    a 503 surfaced as "Gemini analysis request failed: 503 UNAVAILABLE. {'error':
+    {'code': 503, 'me...'" verbatim in the app's toast, via GeminiAnalysisError's
+    message -> scan.error_message -> Android's onAnalysisFailed Toast) — callers should
+    always log the raw exception themselves before raising with this instead.
+    """
+    if isinstance(e, errors.ServerError):
+        return ("The mood analysis service is temporarily overloaded. "
+                "Please try scanning again in a few minutes.")
+    if isinstance(e, errors.ClientError) and e.code == 429:
+        return "We've hit today's analysis limit. Please try again later."
+    return "We couldn't analyze this scan right now. Please try again."
+
+
+def _generate_with_retries(client: genai.Client, model: str, contents: list):
+    """Calls generate_content on `model`, retrying only a transient ServerError (5xx,
+    e.g. 503 "high demand") with exponential backoff — up to
+    GEMINI_MAX_RETRIES_PER_MODEL retries before giving up on this model. A ClientError
+    (e.g. 429) is not retried here; the caller decides whether to fall back to the next
+    model for those.
+    """
+    last_error: Optional[errors.ServerError] = None
+    for attempt in range(GEMINI_MAX_RETRIES_PER_MODEL + 1):
+        try:
+            return client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=ScanAnalysis,
+                ),
+            )
+        except errors.ServerError as e:
+            last_error = e
+            if attempt < GEMINI_MAX_RETRIES_PER_MODEL:
+                delay = GEMINI_RETRY_BACKOFF_SECONDS * (2 ** attempt)
+                logger.warning(
+                    f"{model} returned a transient error ({e.code} {e.status}), "
+                    f"retrying in {delay}s (attempt {attempt + 1}/{GEMINI_MAX_RETRIES_PER_MODEL})"
+                )
+                time.sleep(delay)
+    raise last_error
 
 
 def _get_client() -> genai.Client:
@@ -131,31 +184,32 @@ def analyze_pet_scan(video_path: str, photo_paths: List[str], description: Optio
         contents = [uploaded_file] + photo_parts + [prompt]
 
         response = None
-        rate_limit_error: Optional[Exception] = None
+        last_error: Optional[Exception] = None
         for model in GEMINI_MODELS:
             try:
-                response = client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=ScanAnalysis,
-                    ),
-                )
+                response = _generate_with_retries(client, model, contents)
                 break
             except errors.ClientError as e:
                 if e.code == 429:
                     logger.warning(f"{model} is rate-limited, falling back to next model")
-                    rate_limit_error = e
+                    last_error = e
                     continue
-                raise GeminiAnalysisError(f"Gemini analysis request failed: {e}") from e
+                logger.error(f"Gemini rejected the request ({model}): {e}")
+                raise GeminiAnalysisError(_friendly_gemini_error(e)) from e
+            except errors.ServerError as e:
+                logger.warning(
+                    f"{model} still unavailable after {GEMINI_MAX_RETRIES_PER_MODEL} retries "
+                    f"({e.code} {e.status}), falling back to next model"
+                )
+                last_error = e
+                continue
             except Exception as e:
+                logger.error(f"Gemini analysis request failed ({model}): {e}")
                 raise GeminiAnalysisError(f"Gemini analysis request failed: {e}") from e
 
         if response is None:
-            raise GeminiAnalysisError(
-                f"All Gemini models are rate-limited: {rate_limit_error}"
-            ) from rate_limit_error
+            logger.error(f"All Gemini models exhausted: {last_error}")
+            raise GeminiAnalysisError(_friendly_gemini_error(last_error)) from last_error
 
         if not isinstance(response.parsed, ScanAnalysis):
             raise GeminiAnalysisError("Gemini returned an unparseable response")
