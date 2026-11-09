@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 import firebase_admin
 from firebase_admin import credentials, messaging
@@ -28,15 +29,32 @@ def init_firebase() -> None:
         logger.warning(f"Failed to initialize Firebase Admin SDK: {e}")
 
 
-def send_scan_notification(token: str, title: str, body: str) -> None:
+def send_scan_notification(
+    token: str,
+    title: str,
+    body: str,
+    pet_id: Optional[str] = None,
+    scan_id: Optional[str] = None,
+) -> None:
     """Sends a single push notification. Never raises — this is called from the
     scan background task, and a failed or skipped send must not affect
-    scan.status/error_message, which are already committed by the time this runs."""
+    scan.status/error_message, which are already committed by the time this runs.
+
+    pet_id/scan_id ride along as the FCM data payload (data values must be
+    strings) so the Android client can deep-link straight to that scan's
+    result on tap instead of just opening the app cold — see
+    PetMoodFirebaseMessagingService.onMessageReceived."""
     if not _initialized:
         return
     try:
+        data = {}
+        if pet_id is not None:
+            data["pet_id"] = pet_id
+        if scan_id is not None:
+            data["scan_id"] = scan_id
         message = messaging.Message(
             notification=messaging.Notification(title=title, body=body),
+            data=data,
             token=token,
         )
         messaging.send(message)
