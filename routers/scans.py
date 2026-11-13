@@ -86,9 +86,15 @@ def analyze_scan(scan_id: str, video_path: str, photo_paths: List[str], descript
         owner_token = scan.pet.owner.fcm_token
         if owner_token:
             if scan.status == "complete":
-                send_scan_notification(owner_token, "Analysis complete", "Your pet's mood analysis is ready.")
+                send_scan_notification(
+                    owner_token, "Analysis complete", "Your pet's mood analysis is ready.",
+                    pet_id=scan.pet_id, scan_id=scan.id,
+                )
             else:
-                send_scan_notification(owner_token, "Analysis failed", scan.error_message or "Something went wrong.")
+                send_scan_notification(
+                    owner_token, "Analysis failed", scan.error_message or "Something went wrong.",
+                    pet_id=scan.pet_id, scan_id=scan.id,
+                )
     finally:
         db.close()
         if os.path.exists(video_path):
